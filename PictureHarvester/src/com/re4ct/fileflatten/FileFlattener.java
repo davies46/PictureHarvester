@@ -16,12 +16,8 @@ import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.io.File;
 import java.io.FileFilter;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -363,40 +359,40 @@ public class FileFlattener implements ActionListener {
 	// }
 	// }
 
-	public static boolean isEqual(File f1, File f2) throws IOException {
-		try (InputStream is1 = new FileInputStream(f1); InputStream is2 = new FileInputStream(f2)) {
-			return isEqual(is1, is2);
-		}
-	}
+	// private static boolean isEqual(File f1, File f2) throws IOException {
+	// try (InputStream is1 = new FileInputStream(f1); InputStream is2 = new FileInputStream(f2)) {
+	// return isEqual(is1, is2);
+	// }
+	// }
 
-	private static boolean isEqual(InputStream i1, InputStream i2) throws IOException {
-		try (ReadableByteChannel ch1 = Channels.newChannel(i1); ReadableByteChannel ch2 = Channels.newChannel(i2);) {
-			while (true) {
-
-				int n1 = ch1.read(bufa);
-				int n2 = ch2.read(bufb);
-
-				if (n1 == -1 || n2 == -1)
-					return n1 == n2;
-
-				bufa.flip();
-				bufb.flip();
-
-				for (int i = 0; i < Math.min(n1, n2); i++)
-					if (bufa.get() != bufb.get())
-						return false;
-
-				bufa.compact();
-				bufb.compact();
-			}
-
-		} finally {
-			if (i1 != null)
-				i1.close();
-			if (i2 != null)
-				i2.close();
-		}
-	}
+	// private static boolean isEqual(InputStream i1, InputStream i2) throws IOException {
+	// try (ReadableByteChannel ch1 = Channels.newChannel(i1); ReadableByteChannel ch2 = Channels.newChannel(i2);) {
+	// while (true) {
+	//
+	// int n1 = ch1.read(bufa);
+	// int n2 = ch2.read(bufb);
+	//
+	// if (n1 == -1 || n2 == -1)
+	// return n1 == n2;
+	//
+	// bufa.flip();
+	// bufb.flip();
+	//
+	// for (int i = 0; i < Math.min(n1, n2); i++)
+	// if (bufa.get() != bufb.get())
+	// return false;
+	//
+	// bufa.compact();
+	// bufb.compact();
+	// }
+	//
+	// } finally {
+	// if (i1 != null)
+	// i1.close();
+	// if (i2 != null)
+	// i2.close();
+	// }
+	// }
 
 	// private static boolean isEqual2(InputStream i1, InputStream i2) throws IOException {
 	// try (DataInputStream d1 = new DataInputStream(i1); DataInputStream d2 = new DataInputStream(i2)) {
