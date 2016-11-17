@@ -1,13 +1,12 @@
 package com.re4ct.fileflatten;
 
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.awt.Dimension;
 import java.awt.EventQueue;
-import java.awt.Graphics2D;
-import java.awt.Image;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.WindowAdapter;
@@ -18,7 +17,9 @@ import java.io.File;
 import java.io.FileFilter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 import javax.imageio.ImageIO;
@@ -33,33 +34,39 @@ import javax.swing.JTextField;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.log4j.Logger;
 
+import com.galenframework.rainbow4j.ComparisonOptions;
+import com.galenframework.rainbow4j.ImageCompareResult;
+import com.galenframework.rainbow4j.Rainbow4J;
+import com.galenframework.rainbow4j.filters.BlurFilter;
+
 public class FileFlattener implements ActionListener {
-	final static Logger	log				= Logger.getLogger(FileFlattener.class);
+	final static Logger				log					= Logger.getLogger(FileFlattener.class);
 	// List<File> dstFiles = new LinkedList<>();
 	// List<String> dstFiles = new LinkedList<>();
-	Set<String>			writtenFiles	= new HashSet<>();
-	JFrame				frame;
-	JTextArea			outputArea;
-	File				dstRootFolder;
-	File				srcRootFolder;
-	boolean				aborting;
-	int					copies;
-	int					visited;
-	int					renames;
-	private JLabel		iterLbl;
-	JTextField			dstWFld;
-	JTextField			dstHFld;
-	public int			maxImgW;
-	public int			maxImgH;
-	private long		hash1;
-	private long		hash2;
-	static byte[]		buf1;
-	static byte[]		buf2;
-	static ByteBuffer	bufa			= ByteBuffer.allocateDirect(64 * 1024);
-	static ByteBuffer	bufb			= ByteBuffer.allocateDirect(64 * 1024);
-	static byte[]		buffer;
+	Set<String>						writtenFilenames	= new HashSet<>();
+	JFrame							frame;
+	JTextArea						outputArea;
+	File							dstRootFolder;
+	File							srcRootFolder;
+	boolean							aborting;
+	int								copies;
+	int								visited;
+	int								renames;
+	private JLabel					iterLbl;
+	JTextField						dstWFld;
+	JTextField						dstHFld;
+	public int						maxImgW;
+	public int						maxImgH;
+	private long					hash1;
+	private long					hash2;
+	static byte[]					buf1;
+	static byte[]					buf2;
+	static ByteBuffer				bufa				= ByteBuffer.allocateDirect(64 * 1024);
+	static ByteBuffer				bufb				= ByteBuffer.allocateDirect(64 * 1024);
+	static byte[]					buffer;
 	// final static int MAX_IMAGE_WIDTH = 1920;
 	// final static int MAX_IMAGE_HEIGHT = 19;
+	Map<Long, Set<ImageDetails>>	imageDetailsMap		= new HashMap<>();
 
 	static {
 		buffer = new byte[64 * 1024];
@@ -89,7 +96,7 @@ public class FileFlattener implements ActionListener {
 		@Override
 		public void run() {
 			log.info("Start");
-			writtenFiles.clear();
+			writtenFilenames.clear();
 			for (File child : dstRootFolder.listFiles()) {
 				assertTrue("Dest folder should not contain sub-folders", child.isFile());
 				assertFalse("Dest folder should not contain sub-folders", child.isDirectory());
@@ -102,6 +109,10 @@ public class FileFlattener implements ActionListener {
 			long start = System.currentTimeMillis();
 			maxImgW = Integer.parseInt(dstWFld.getText());
 			maxImgH = Integer.parseInt(dstHFld.getText());
+			log.info("max " + maxImgW);
+			assertNotEquals(0, maxImgH);
+			assertNotEquals(0, maxImgW);
+
 			recurseDownFolderAndCopyToDest(srcRootFolder);
 			long finish = System.currentTimeMillis();
 			long time = finish - start;
@@ -222,7 +233,7 @@ public class FileFlattener implements ActionListener {
 		if (aborting)
 			return;
 		log.info("<<" + srcPath.getName() + ">>");
-		for (File child : srcPath.listFiles(new FileFilter() {
+		for (File srcFile : srcPath.listFiles(new FileFilter() {
 			@Override
 			public boolean accept(File pathname) {
 				String extn = FilenameUtils.getExtension(pathname.getName());
@@ -232,41 +243,66 @@ public class FileFlattener implements ActionListener {
 		})) {
 			visited++;
 			try {
-				if (child.isDirectory()) {
-					recurseDownFolderAndCopyToDest(child);
+				if (srcFile.isDirectory()) {
+					recurseDownFolderAndCopyToDest(srcFile);
 				} else {
-					if (child.length() > 32768) {
-						String srcName = child.getName();
-						String key = srcName.toLowerCase();
+					if (srcFile.length() > 32768) {
+						String srcName = srcFile.getName();
+						String newFilename = srcName.toLowerCase();
+
+						ImageDetails imageDetails = new ImageDetails(srcFile, maxImgW, maxImgH);
+						// ImageDetails imageDetails2 = new ImageDetails(srcFile, maxImgW, maxImgH);
+						// // if (imageDetails.getDigest() != imageDetails2.getDigest()) {
+						// // log.error("Unequal digest on same image");
+						// // }
+						// if (similar(imageDetails.getScaledBufferedImage(), imageDetails2.getScaledBufferedImage())) {
+						// log.info("yeah same is same");
+						// } else {
+						// log.error("Same is different");
+						// }
+						long digest = imageDetails.getDigest();
+						if (imageDetailsMap.containsKey(digest)) {
+							log.warn("Clash with digest " + digest);
+							Set<ImageDetails> candidates = imageDetailsMap.get(digest);
+							for (ImageDetails candidate : candidates) {
+								log.info("File may already exist: " + srcName + " as " + candidate.getFile().getName());
+								// if (sameContents(imageDetails.getScaledBufferedImage(), candidate.getScaledBufferedImage())) {
+								if (similar(imageDetails.getScaledBufferedImage(), candidate.getScaledBufferedImage())) {
+									log.warn("File already exists, ignore this");
+									continue;
+								}
+							}
+							log.info("OK, it's different");
+						}
+
 						File dest = null;
 
 						// What we want to do now is determine the hash of the output image that will be generated
 						// after scaling and rotation,
 						// then see if the hash already exists. If it does we need to discover what file(s)
 						// that relates to so that we can drag those out and do a pixel compare of those.
-						if (writtenFiles.contains(key)) {
-							assertTrue(child.isFile());
-							File existingDstFile = new File(dstRootFolder + "/" + child.getName());
-							if (sameContents1(child, existingDstFile)) {
-								log.info("Same contents so we can ignore " + child + ", " + existingDstFile);
-								continue;
-							}
+
+						if (writtenFilenames.contains(newFilename)) {
+
+							assertTrue(srcFile.isFile());
+							File existingDstFile = new File(dstRootFolder + "/" + srcFile.getName());
+
 							String newName;
 							String base = FilenameUtils.getBaseName(srcName);
 
 							log.info("Different contents so we have to rename");
 							for (int suf = 0;; suf++) {
 								newName = base + "-" + suf + "." + "jpg";
-								if (!writtenFiles.contains(newName.toLowerCase())) {
+								if (!writtenFilenames.contains(newName)) {
 									break;
 								}
 							}
 
-							log.info("Renaming from " + srcName + " to " + newName + ", while copying " + child + " to " + existingDstFile.getPath());
+							log.info("Renaming from " + srcName + " to " + newName + ", while copying " + srcFile + " to " + existingDstFile.getPath());
 							dest = new File(dstRootFolder.getAbsolutePath() + "/" + newName);
 							renames++;
 						} else {
-							log.info("Copy file " + child.getCanonicalFile() + " to " + dstRootFolder.getAbsolutePath() + "/" + child.getName());
+							log.info("Copy file " + srcFile.getCanonicalFile() + " to " + dstRootFolder.getAbsolutePath() + "/" + srcFile.getName());
 							String base = FilenameUtils.getBaseName(srcName);
 
 							dest = new File(dstRootFolder.getAbsolutePath() + "/" + base + ".jpg");
@@ -274,13 +310,22 @@ public class FileFlattener implements ActionListener {
 						assertNotNull(dest);
 
 						// TODO the file name might be .png, we need to change to .jpg
-						BufferedImage scaledImage = getScaledBufferedImage(child);
+
+						BufferedImage scaledImage = imageDetails.getScaledBufferedImage();
 						if (scaledImage != null) {
-							ImageIO.write(scaledImage, "jpg", dest);
-							writtenFiles.add(dest.getName().toLowerCase());
+							// log.info("Would write " + srcName + " to " + dest.getName());
+							// ImageIO.write(scaledImage, "jpg", dest);
+							writtenFilenames.add(dest.getName().toLowerCase());
+							Set<ImageDetails> existing = imageDetailsMap.get(digest);
+							if (existing == null) {
+								existing = new HashSet<>();
+								imageDetailsMap.put(digest, existing);
+							}
+							// potentially add another file with the same digest
+							existing.add(imageDetails);
 							copies++;
 
-							log.warn("copied");
+							// log.info("copied");
 							// fail("OK");
 						}
 					}
@@ -295,141 +340,27 @@ public class FileFlattener implements ActionListener {
 		}
 	}
 
-	private BufferedImage getScaledBufferedImage(File child) {
-		BufferedImage img1;
+	static boolean similar(BufferedImage rba, BufferedImage rbb) {
 		try {
-			img1 = ImageIO.read(child);
+			ComparisonOptions options = new ComparisonOptions();
+			options.addFilterBoth(new BlurFilter(2));
+			ImageCompareResult res = Rainbow4J.compare(rba, rbb, options);
+			return !(res.getPercentage() > 2.0);
 
-			if (img1 == null) {
-				log.error("Bad file " + child.getCanonicalFile());
-				return null;
-			}
-			int rawW = img1.getWidth();
-			int rawH = img1.getHeight();
-
-			double underWidth = 1.0 * maxImgW / rawW;
-			double underHeight = 1.0 * maxImgH / rawH;
-			// if it's overwidth by more than overheight then scale according to overwidth
-			// if it's under both, same
-			double scale = (underWidth < underHeight) ? underWidth : underHeight;
-
-			int newW = (int) (rawW * scale);
-			int newH = (int) (rawH * scale);
-
-			BufferedImage scaledBufferedImage = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_RGB);
-			Graphics2D g = scaledBufferedImage.createGraphics();
-			g.drawImage(img1, 0, 0, newW, newH, null);
-			return scaledBufferedImage;
-		} catch (Exception e) {
-			log.error("Failed to open image " + child.getName(), e);
-			return null;
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
 		}
+		return false;
 	}
 
-	public static BufferedImage toBufferedImage(Image img) {
-		if (img instanceof BufferedImage) {
-			return (BufferedImage) img;
-		}
-
-		// Create a buffered image with transparency
-		BufferedImage bimage = new BufferedImage(img.getWidth(null), img.getHeight(null), BufferedImage.TYPE_INT_ARGB);
-
-		// Draw the image on to the buffered image
-		Graphics2D bGr = bimage.createGraphics();
-		bGr.drawImage(img, 0, 0, null);
-		bGr.dispose();
-
-		// Return the buffered image
-		return bimage;
-	}
-
-	// private static void copyFileUsingStream(File source, File dest) throws IOException {
-	// InputStream is = null;
-	// OutputStream os = null;
-	// try {
-	// is = new FileInputStream(source);
-	// os = new FileOutputStream(dest);
-	// int length;
-	// while ((length = is.read(buffer)) > 0) {
-	// os.write(buffer, 0, length);
-	// }
-	// } finally {
-	// is.close();
-	// os.close();
-	// }
-	// }
-
-	// private static boolean isEqual(File f1, File f2) throws IOException {
-	// try (InputStream is1 = new FileInputStream(f1); InputStream is2 = new FileInputStream(f2)) {
-	// return isEqual(is1, is2);
-	// }
-	// }
-
-	// private static boolean isEqual(InputStream i1, InputStream i2) throws IOException {
-	// try (ReadableByteChannel ch1 = Channels.newChannel(i1); ReadableByteChannel ch2 = Channels.newChannel(i2);) {
-	// while (true) {
-	//
-	// int n1 = ch1.read(bufa);
-	// int n2 = ch2.read(bufb);
-	//
-	// if (n1 == -1 || n2 == -1)
-	// return n1 == n2;
-	//
-	// bufa.flip();
-	// bufb.flip();
-	//
-	// for (int i = 0; i < Math.min(n1, n2); i++)
-	// if (bufa.get() != bufb.get())
-	// return false;
-	//
-	// bufa.compact();
-	// bufb.compact();
-	// }
-	//
-	// } finally {
-	// if (i1 != null)
-	// i1.close();
-	// if (i2 != null)
-	// i2.close();
-	// }
-	// }
-
-	// private static boolean isEqual2(InputStream i1, InputStream i2) throws IOException {
-	// try (DataInputStream d1 = new DataInputStream(i1); DataInputStream d2 = new DataInputStream(i2)) {
-	// int len;
-	// int ofs = 0;
-	// while ((len = d1.read(buf1)) > 0) {
-	// d2.readFully(buf2, 0, len);
-	// for (int i = 0; i < len; i++)
-	// if (buf1[i] != buf2[i]) {
-	// ofs += i;
-	// log.info("Ofs for mismatch is " + ofs + " with " + buf1[i] + "-" + buf2[i]);
-	// return false;
-	// }
-	// ofs += len;
-	// }
-	// return d2.read() < 0; // is the end of the second file also.
-	// }
-	// }
-
-	// private static boolean sameContents(File srcFile, File existingDstfile) throws IOException {
-	// if (srcFile.length() != existingDstfile.length())
-	// return false;
-	// long start = System.currentTimeMillis();
-	// // boolean res = FileUtils.contentEquals(srcFile, existingDstfile);
-	// boolean res = isEqual(srcFile, existingDstfile);
-	// long finish = System.currentTimeMillis();
-	// // log.info("FileUtils.contentEquals " + (finish - start) + "ms");
-	// return res;
-	// }
-
-	boolean sameContents1(File f1, File f2) throws IOException {
+	boolean sameContents(File f1, File f2) throws IOException {
 		BufferedImage srcFileImage = ImageIO.read(f1);
 		BufferedImage dstFileImage = ImageIO.read(f2);
-		return bufferedImagesEqual2(srcFileImage, dstFileImage);
+		return sameContents(srcFileImage, dstFileImage);
 	}
 
-	boolean bufferedImagesEqual2(BufferedImage img1, BufferedImage img2) {
+	boolean sameContents(BufferedImage img1, BufferedImage img2) {
 		DataBuffer img1DB = img1.getData().getDataBuffer();
 		DataBuffer img2DB = img2.getData().getDataBuffer();
 
