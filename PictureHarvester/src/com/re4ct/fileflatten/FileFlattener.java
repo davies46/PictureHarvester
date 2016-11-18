@@ -21,6 +21,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.LinkedBlockingDeque;
 
 import javax.imageio.ImageIO;
 import javax.swing.BoxLayout;
@@ -97,21 +99,36 @@ public class FileFlattener implements ActionListener {
 		public void run() {
 			log.info("Start");
 			writtenFilenames.clear();
-			for (File child : dstRootFolder.listFiles()) {
-				assertTrue("Dest folder should not contain sub-folders", child.isFile());
-				assertFalse("Dest folder should not contain sub-folders", child.isDirectory());
-				String dstPath = child.getName();
-				log.info(dstPath);
-				outputArea.append(dstPath);
-				outputArea.append("\n");
-				// dstFiles.add(dstPath);
-			}
-			long start = System.currentTimeMillis();
 			maxImgW = Integer.parseInt(dstWFld.getText());
 			maxImgH = Integer.parseInt(dstHFld.getText());
 			log.info("max " + maxImgW);
 			assertNotEquals(0, maxImgH);
 			assertNotEquals(0, maxImgW);
+			for (File child : dstRootFolder.listFiles()) {
+				assertTrue("Dest folder should not contain sub-folders", child.isFile());
+				assertFalse("Dest folder should not contain sub-folders", child.isDirectory());
+				String dstPath = child.getName();
+				log.info(dstPath);
+				writtenFilenames.add(dstPath);
+				try {
+					ImageDetails details = new ImageDetails(child, maxImgW, maxImgH);
+					Set<ImageDetails> existing = imageDetailsMap.get(details.getDigest());
+					if (existing == null) {
+						existing = new HashSet<>();
+						imageDetailsMap.put(details.getDigest(), existing);
+					}
+					existing.add(details);
+					details.discardImage();
+				} catch (IOException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				outputArea.append(dstPath);
+				outputArea.append("\n");
+				// dstFiles.add(dstPath);
+			}
+			long start = System.currentTimeMillis();
+			new Thread(copyThread).start();
 
 			recurseDownFolderAndCopyToDest(srcRootFolder);
 			long finish = System.currentTimeMillis();
@@ -121,6 +138,42 @@ public class FileFlattener implements ActionListener {
 			log.info("Renamed " + renames + " files");
 		}
 	}
+
+	Runnable copyThread = new Runnable() {
+
+		@Override
+		public void run() {
+			for (;;) {
+				CopyRequest copyRequest;
+				try {
+					copyRequest = copyRequests.takeFirst();
+					ImageDetails imageDetails = copyRequest.imageDetails;
+					File dest = copyRequest.dest;
+					BufferedImage scaledImage = imageDetails.getScaledBufferedImage();
+					if (scaledImage != null) {
+						try {
+							ImageIO.write(scaledImage, "jpg", dest);
+						} catch (IOException e) {
+							log.error("Failed to write image " + dest, e);
+						}
+						writtenFilenames.add(dest.getName().toLowerCase());
+						Set<ImageDetails> existing = imageDetailsMap.get(imageDetails.getDigest());
+						if (existing == null) {
+							existing = new HashSet<>();
+							imageDetailsMap.put(imageDetails.getDigest(), existing);
+						}
+						// potentially add another file with the same digest
+						imageDetails.discardImage();
+						existing.add(imageDetails);
+						copies++;
+					}
+				} catch (InterruptedException e1) {
+					// TODO Auto-generated catch block
+					e1.printStackTrace();
+				}
+			}
+		}
+	};
 
 	/**
 	 * Create the application.
@@ -189,21 +242,7 @@ public class FileFlattener implements ActionListener {
 
 			@Override
 			public void actionPerformed(ActionEvent e) {
-				String src = srcData.getPath();
-				String dst = dstData.getPath();
-				outputArea.append(src);
-				outputArea.append(" to ");
-				outputArea.append(dst);
-				outputArea.append("\n");
-
-				dstRootFolder = new File(dst);
-				assertTrue("Dst must be folder", dstRootFolder.isDirectory());
-
-				srcRootFolder = new File(src);
-				assertTrue("Src must be folder", srcRootFolder.isDirectory());
-
-				Thread thread = new Thread(new Copyer());
-				thread.start();
+				doCopy();
 			}
 		});
 
@@ -227,13 +266,33 @@ public class FileFlattener implements ActionListener {
 				e.getWindow().dispose();
 			}
 		});
+		doCopy();
+	}
+
+	private void doCopy() {
+		String src = "R:/Media/pix";
+		String dst = "D:/Flat pics";
+		outputArea.append(src);
+		outputArea.append(" to ");
+		outputArea.append(dst);
+		outputArea.append("\n");
+
+		dstRootFolder = new File(dst);
+		assertTrue("Dst must be folder", dstRootFolder.isDirectory());
+
+		srcRootFolder = new File(src);
+		assertTrue("Src must be folder", srcRootFolder.isDirectory());
+
+		Thread thread = new Thread(new Copyer());
+		thread.start();
 	}
 
 	protected void recurseDownFolderAndCopyToDest(File srcPath) {
 		if (aborting)
 			return;
 		log.info("<<" + srcPath.getName() + ">>");
-		for (File srcFile : srcPath.listFiles(new FileFilter() {
+
+		nextPic: for (File srcFile : srcPath.listFiles(new FileFilter() {
 			@Override
 			public boolean accept(File pathname) {
 				String extn = FilenameUtils.getExtension(pathname.getName());
@@ -269,7 +328,7 @@ public class FileFlattener implements ActionListener {
 								// if (sameContents(imageDetails.getScaledBufferedImage(), candidate.getScaledBufferedImage())) {
 								if (similar(imageDetails.getScaledBufferedImage(), candidate.getScaledBufferedImage())) {
 									log.warn("File already exists, ignore this");
-									continue;
+									continue nextPic;
 								}
 							}
 							log.info("OK, it's different");
@@ -310,24 +369,7 @@ public class FileFlattener implements ActionListener {
 						assertNotNull(dest);
 
 						// TODO the file name might be .png, we need to change to .jpg
-
-						BufferedImage scaledImage = imageDetails.getScaledBufferedImage();
-						if (scaledImage != null) {
-							// log.info("Would write " + srcName + " to " + dest.getName());
-							// ImageIO.write(scaledImage, "jpg", dest);
-							writtenFilenames.add(dest.getName().toLowerCase());
-							Set<ImageDetails> existing = imageDetailsMap.get(digest);
-							if (existing == null) {
-								existing = new HashSet<>();
-								imageDetailsMap.put(digest, existing);
-							}
-							// potentially add another file with the same digest
-							existing.add(imageDetails);
-							copies++;
-
-							// log.info("copied");
-							// fail("OK");
-						}
+						bgCopy(imageDetails, dest);
 					}
 				}
 				if (visited % 10 == 0)
@@ -338,6 +380,24 @@ public class FileFlattener implements ActionListener {
 				log.error("Exc", e);
 			}
 		}
+	}
+
+	class CopyRequest {
+		ImageDetails	imageDetails;
+		File			dest;
+
+		public CopyRequest(ImageDetails imageDetails, File dest) {
+			super();
+			this.imageDetails = imageDetails;
+			this.dest = dest;
+		}
+
+	}
+
+	final BlockingDeque<CopyRequest> copyRequests = new LinkedBlockingDeque<>();
+
+	private void bgCopy(ImageDetails imageDetails, File dest) {
+		copyRequests.add(new CopyRequest(imageDetails, dest));
 	}
 
 	static boolean similar(BufferedImage rba, BufferedImage rbb) {

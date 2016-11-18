@@ -10,5 +10,6 @@
 	<classpathentry kind="lib" path="D:/workspace/jars/sanselan-0.97-incubator.jar" sourcepath="D:/workspace/jars/sanselan-0.97-incubator/src"/>
 	<classpathentry kind="lib" path="lib/galen-rainbow4j-2.2.1.jar"/>
 	<classpathentry kind="lib" path="lib/commons-lang3-3.5.jar"/>
+	<classpathentry kind="con" path="org.eclipse.jdt.USER_LIBRARY/OpenCV"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>
