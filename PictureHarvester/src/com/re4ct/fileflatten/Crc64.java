@@ -3,7 +3,7 @@ package com.re4ct.fileflatten;
 import java.awt.image.DataBuffer;
 
 public class Crc64 {
-	static long[]		table	= new long[256];
+	final static long[]	table	= new long[256];
 	final static long	poly	= 0xC96C5795D7870F42l;
 
 	static {
@@ -27,6 +27,7 @@ public class Crc64 {
 			table[i] = crc;
 		}
 	}
+	private long crc;
 
 	static long calculateCrc(DataBuffer img1DB) {
 		long crc = 0;
@@ -67,6 +68,23 @@ public class Crc64 {
 				}
 			}
 		}
+		return crc;
+	}
+
+	public Crc64() {
+		crc = 0l;
+	}
+
+	public void add(int rgb, double pc) {
+		int el1 = (int) (rgb * pc);
+		int index = (int) ((((el1 ^ crc) % 256) + 256) / 2);
+		el1 >>= 8;
+		long lookup = table[index];
+		crc >>= 8;
+		crc ^= lookup;
+	}
+
+	public long getCrc() {
 		return crc;
 	}
 

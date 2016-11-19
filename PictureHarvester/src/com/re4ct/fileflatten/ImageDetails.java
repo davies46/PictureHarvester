@@ -1,6 +1,8 @@
 package com.re4ct.fileflatten;
 
 import java.awt.Graphics2D;
+import java.awt.GraphicsConfiguration;
+import java.awt.GraphicsEnvironment;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBuffer;
 import java.awt.image.DataBufferByte;
@@ -18,19 +20,23 @@ import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 
 public class ImageDetails {
-	final static Logger		log					= Logger.getLogger(ImageDetails.class);
+	final static Logger		log						= Logger.getLogger(ImageDetails.class);
 
 	private File			file;
-	private long			digest;
+	final private long		digest;
 
 	final private int		maxImgW;
 	final private int		maxImgH;
 
-	private BufferedImage	scaledBufferedImage	= null;
-	private static int		computed			= 0;
+	private BufferedImage	scaledBufferedImage		= null;
 
-	final int				COLREZ				= 16;
-	final int				DIVIDER				= 256 / COLREZ;
+	private BufferedImage	thumbnailBufferedImage	= null;
+
+	private static int		computed				= 0;
+
+	final int				THUMB					= 16;
+	final int				COLREZ					= 8;
+	final int				DIVIDER					= 256 / COLREZ;
 	final int[][][]			colormap;
 
 	static {
@@ -52,26 +58,42 @@ public class ImageDetails {
 				colormap[i][j] = new int[COLREZ];
 			}
 		}
-		calcDigest();
+		digest = calcDigest();
+		log.debug("Digest " + digest);
 	}
 
 	private long calcDigest() throws IOException {
 
-		BufferedImage srcFileImage = ImageIO.read(file);
-		// DataBuffer img1DB = srcFileImage.getData().getDataBuffer();
-
-		if (srcFileImage == null) {
-			log.error("Bad file " + file.getCanonicalFile());
-			return 0;
-		}
+		// BufferedImage srcFileImage = ImageIO.read(file);
+		// // DataBuffer img1DB = srcFileImage.getData().getDataBuffer();
+		//
+		// if (srcFileImage == null) {
+		// log.error("Bad file " + file.getCanonicalFile());
+		// return 0;
+		// }
 
 		getScaledBufferedImage();
+		getThumbnailBufferedImage();
 
-		final int[] data = ((DataBufferInt) scaledBufferedImage.getData().getDataBuffer()).getData();
+		final int[] data = ((DataBufferInt) thumbnailBufferedImage.getData().getDataBuffer()).getData();
 
-		digest = 0;
+		// Crc64 crc64 = new Crc64();
+		// Spectrum spectrum = Rainbow4J.readSpectrum(thumbnailBufferedImage, 250);
+		// List<ColorDistribution> dist = spectrum.getColorDistribution(1);
+		// for (ColorDistribution cd : dist) {
+		// int rgb = cd.getColor().getRGB();
+		// double pc = cd.getPercentage();
+		// crc64.add(rgb, pc);
+		// }
+		// computed++;
+		// return crc64.getCrc();
+		long hash = 0;
+		log.info("Data len " + data.length);
 		for (int i = 0; i < data.length; i++) {
 			int d = data[i];
+			System.out.print(d + " ");
+			hash <<= 8;
+			hash += d;
 			int r = (256 + d % 256) / 2 / DIVIDER;
 			d >>= 8;
 			int g = (256 + d % 256) / 2 / DIVIDER;
@@ -79,32 +101,18 @@ public class ImageDetails {
 			int b = (256 + d % 256) / 2 / DIVIDER;
 			colormap[r][g][b]++;
 		}
-		digest = Crc64.calculateCrc(colormap);
-		log.info("Digest " + digest);
-		// Spectrum sp = Rainbow4J.readSpectrum(scaledBufferedImage, 250);
-		// List<ColorDistribution> cds = sp.getColorDistribution(1);// min %
-		// long total = 0;
-		// for (ColorDistribution cd : cds) {
-		// log.info("CD " + cd.getPercentage());
-		// total *= 100;
-		// total += (int) cd.getPercentage();
-		// }
-		// digest = total;
-		// log.info("Digest " + digest);
+		hash = Crc64.calculateCrc(colormap);
+		log.info("Digest " + hash);
 
-		//
-		// DataBuffer img1DB = scaledBufferedImage.getData().getDataBuffer();
-		//
-		// digest = Crc64.calculateCrc(img1DB);
-		computed++;
-		// }
-		return digest;
+		return hash;
 
 	}
 
 	private void createScaledBufferedImage() throws IOException {
 		BufferedImage srcFileImage = ImageIO.read(file);
-
+		if (srcFileImage == null) {
+			throw new IOException("Bad file");
+		}
 		int rawW = srcFileImage.getWidth();
 		int rawH = srcFileImage.getHeight();
 		double underWidth = 1.0 * maxImgW / rawW;
@@ -119,11 +127,42 @@ public class ImageDetails {
 			log.error("Bad pic size for " + file.getName());
 			log.error("Max " + maxImgW + "," + maxImgH);
 		} else {
-			// GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
-			// GraphicsConfiguration gc = ge.getDefaultScreenDevice().getDefaultConfiguration();
-			scaledBufferedImage = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_ARGB);
+			GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+			GraphicsConfiguration gc = ge.getDefaultScreenDevice().getDefaultConfiguration();
+
+			scaledBufferedImage = gc.createCompatibleImage(newW, newH);// new BufferedImage(newW, newH, BufferedImage.TYPE_INT_ARGB);
 
 			Graphics2D gr = scaledBufferedImage.createGraphics();
+			gr.drawImage(srcFileImage, 0, 0, newW, newH, null);
+			gr.dispose();
+		}
+	}
+
+	private void createThumbnailBufferedImage() throws IOException {
+		BufferedImage srcFileImage = ImageIO.read(file);
+		if (srcFileImage == null) {
+			throw new IOException("Bad file");
+		}
+		int rawW = srcFileImage.getWidth();
+		int rawH = srcFileImage.getHeight();
+		double underWidth = 1.0 * THUMB / rawW;
+		double underHeight = 1.0 * THUMB / rawH;
+		// if it's overwidth by more than overheight then scale according to overwidth
+		// if it's under both, same
+		double scale = (underWidth < underHeight) ? underWidth : underHeight;
+		int newW = (int) (rawW * scale);
+		int newH = (int) (rawH * scale);
+
+		if (newH == 0 || newW == 0) {
+			log.error("Bad pic size for " + file.getName());
+			log.error("Max " + maxImgW + "," + maxImgH);
+		} else {
+			GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+			GraphicsConfiguration gc = ge.getDefaultScreenDevice().getDefaultConfiguration();
+
+			thumbnailBufferedImage = gc.createCompatibleImage(newW, newH);// new BufferedImage(newW, newH, BufferedImage.TYPE_INT_ARGB);
+
+			Graphics2D gr = thumbnailBufferedImage.createGraphics();
 			gr.drawImage(srcFileImage, 0, 0, newW, newH, null);
 			gr.dispose();
 		}
@@ -175,6 +214,17 @@ public class ImageDetails {
 		return scaledBufferedImage;
 	}
 
+	public BufferedImage getThumbnailBufferedImage() {
+		if (thumbnailBufferedImage == null) {
+			try {
+				createThumbnailBufferedImage();
+			} catch (IOException e) {
+				return null;
+			}
+		}
+		return thumbnailBufferedImage;
+	}
+
 	public long getDigest() {
 		return digest;
 	}
@@ -189,5 +239,9 @@ public class ImageDetails {
 
 	public void discardImage() {
 		scaledBufferedImage = null;
+	}
+
+	public boolean imageDiscarded() {
+		return scaledBufferedImage == null;
 	}
 }
