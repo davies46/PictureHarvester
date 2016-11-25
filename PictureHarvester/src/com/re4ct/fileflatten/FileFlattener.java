@@ -2,13 +2,16 @@ package com.re4ct.fileflatten;
 
 import java.awt.Dimension;
 import java.awt.EventQueue;
+import java.awt.Image;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.awt.image.BufferedImage;
 import java.nio.ByteBuffer;
 
 import javax.swing.BoxLayout;
+import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -25,6 +28,7 @@ public class FileFlattener implements ActionListener, VisualCallbacks {
 	JFrame				frame;
 	JTextArea			outputArea;
 	private JLabel		iterLbl;
+	private JLabel		msgLbl;
 	JTextField			dstWFld;
 	JTextField			dstHFld;
 	static byte[]		buf1;
@@ -97,7 +101,7 @@ public class FileFlattener implements ActionListener, VisualCallbacks {
 		ChooserData dstData = new ChooserData(dstFolderLbl);
 		ChooserBtn chooseDstFolderBtn = new ChooserBtn("Dst Folder", "D:/Flat pics", dstData);
 
-		dstWFld = new JTextField("1280");
+		dstWFld = new JTextField("1800");
 		dstWFld.setToolTipText("Screen width");
 		dstWFld.setMaximumSize(new Dimension(200, 24));
 
@@ -134,7 +138,7 @@ public class FileFlattener implements ActionListener, VisualCallbacks {
 				outputArea.append(dst);
 				outputArea.append("\n");
 				CopyManager copyManager = new CopyManager(FileFlattener.this, maxImgW, maxImgH);
-				copyManager.doCopy(src, dst, maxImgW, maxImgH);
+				copyManager.doCopy(src, dst);
 			}
 		});
 
@@ -142,6 +146,8 @@ public class FileFlattener implements ActionListener, VisualCallbacks {
 
 		iterLbl = new JLabel();
 		boardPanel.add(iterLbl, 5);
+		msgLbl = new JLabel();
+		boardPanel.add(msgLbl, 6);
 
 		pic1 = new JLabel();
 		pic2 = new JLabel();
@@ -150,13 +156,13 @@ public class FileFlattener implements ActionListener, VisualCallbacks {
 		pic2.setMaximumSize(new Dimension(200, 200));
 		pic2.setMinimumSize(new Dimension(200, 200));
 
-		boardPanel.add(pic1, 6);
-		boardPanel.add(pic2, 7);
-		boardPanel.add(outputArea, 8);
+		boardPanel.add(pic1, 7);
+		boardPanel.add(pic2, 8);
+		boardPanel.add(outputArea, 9);
 		// boardPanel.add
 
 		frame = new JFrame();
-		frame.setBounds(100, 100, 450, 450);
+		frame.setBounds(100, 100, 450, 850);
 		frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 
 		frame.add(boardPanel);
@@ -182,8 +188,9 @@ public class FileFlattener implements ActionListener, VisualCallbacks {
 		outputArea.append(" to ");
 		outputArea.append(dst);
 		outputArea.append("\n");
+		iterLbl.setText("Processing...");
 
-		copyManager.doCopy(src, dst, maxImgW, maxImgH);
+		copyManager.doCopy(src, dst);
 	}
 
 	@Override
@@ -191,16 +198,27 @@ public class FileFlattener implements ActionListener, VisualCallbacks {
 
 	}
 
+	// @Override
+	// public void visualImageCompare(String absolutePath, String dstFileName) {
+	// // TODO Auto-generated method stub
+	//
+	// }
 	@Override
-	public void visualImageCompare(String absolutePath, String dstFileName) {
-		// TODO Auto-generated method stub
-
+	public void visualImageCompare(BufferedImage i1, BufferedImage i2) {
+		ImageIcon icon = new ImageIcon(i1.getScaledInstance(128, 128, Image.SCALE_DEFAULT));
+		pic1.setIcon(icon);
+		icon = new ImageIcon(i2.getScaledInstance(128, 128, Image.SCALE_DEFAULT));
+		pic2.setIcon(icon);
 	}
 
 	@Override
 	public void setIterLbl(String string) {
-		// TODO Auto-generated method stub
+		iterLbl.setText(string);
+	}
 
+	@Override
+	public void setMsg(String string) {
+		msgLbl.setText(string);
 	}
 
 }

@@ -19,12 +19,15 @@ import org.opencv.core.Mat;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 
+import kanzi.SliceIntArray;
+import kanzi.transform.DCT8;
+
 public class ImageDetails {
 	final static Logger		log						= Logger.getLogger(ImageDetails.class);
 
 	private File			file;
 	final private long		digest;
-	final private long		digest2;
+	// final private long digest2;
 
 	final private int		maxImgW;
 	final private int		maxImgH;
@@ -32,13 +35,17 @@ public class ImageDetails {
 	private BufferedImage	scaledBufferedImage		= null;
 
 	private BufferedImage	thumbnailBufferedImage	= null;
-	private BufferedImage	thumbnail2BufferedImage	= null;
+	// private BufferedImage thumbnail2BufferedImage = null;
 
 	final int				THUMB					= 8;
 	final int				THUMB2					= 9;
 	final int				COLREZ					= 8;
 	final int				DIVISOR					= 256 / COLREZ;
 	final int[][][]			colormap;
+
+	final private long[]	digest3;
+
+	private int[]			greyscale				= null;
 
 	static {
 		System.loadLibrary(Core.NATIVE_LIBRARY_NAME);
@@ -61,11 +68,13 @@ public class ImageDetails {
 		}
 
 		loadThumbnailBufferedImage();
-		loadThumbnail2BufferedImage();
-		digest = calcDigest(thumbnailBufferedImage, THUMB);
-		digest2 = calcDigest(thumbnail2BufferedImage, THUMB2);
-
-		log.debug("Digest " + digest + ", " + digest2);
+		calcGreyscale();
+		// loadThumbnail2BufferedImage();
+		// digest = calcDigest(thumbnailBufferedImage, THUMB);
+		// digest2 = calcDigest(thumbnail2BufferedImage, THUMB2);
+		digest = calcDigest();
+		digest3 = getDigest(getDct8(thumbnailBufferedImage));
+		// log.debug("Digest " + digest3);
 		// createScaledBufferedImageOpenCV();
 	}
 
@@ -73,11 +82,92 @@ public class ImageDetails {
 	// loadThumbnailBufferedImage();
 	// return calcDigest(thumbnailBufferedImage);
 	// }
+	private static long[] getDigest(SliceIntArray[] sliceIntArrays) {
+		long[] digest = new long[3];
+		for (int c = 0; c < 3; c++) {
+			digest[c] = 0;
+			int[] ints = sliceIntArrays[c].array;
+			int[] ofs = { 0, 1, 8, 2, 9, 16, 24, 17, 10, 3 };
+			for (int i = 0; i < ofs.length; i++) {
+				digest[c] <<= 1;
+				digest[c] = digest[c] + (ints[ofs[i]] > 0 ? 1 : 0);
+			}
+		}
+		return digest;
+	}
 
-	private long calcDigest(BufferedImage bufferedImage, int thumbsize) {
-		final int[] data = ((DataBufferInt) bufferedImage.getData().getDataBuffer()).getData();
+	private static SliceIntArray[] getDct8(BufferedImage img) {
 
-		DCT dct = new DCT(20);
+		// int w = img.getWidth();
+		// assertEquals(16, w);
+
+		// int h = img.getHeight();
+		// assertEquals(16, h);
+
+		BufferedImage bufferedImage = new BufferedImage(8, 8, BufferedImage.TYPE_INT_BGR);
+		Graphics2D gr = bufferedImage.createGraphics();
+		gr.drawImage(img, 0, 0, 8, 8, null);
+		gr.dispose();
+
+		// System.out.println("Type " + bufferedImage.getType());
+		int[] db = ((DataBufferInt) (bufferedImage.getData().getDataBuffer())).getData();
+
+		int dbr[][] = new int[3][];
+		SliceIntArray dst[] = new SliceIntArray[3];
+		for (int c = 0; c < 3; c++) {
+			dbr[c] = new int[64];
+			int[] dstb = new int[64];
+			dst[c] = new SliceIntArray(dstb, 0);
+			for (int i = 0; i < db.length; i++) {
+				dbr[c][i] = db[i] & 0xFF;
+				db[i] >>= 8;
+			}
+			SliceIntArray sliceIntArray = new SliceIntArray(dbr[c], 0);
+
+			DCT8 dct8 = new DCT8();
+			dct8.forward(sliceIntArray, dst[c]);
+
+		}
+
+		// System.out.println(dct8);
+		return dst;
+	}
+
+	public int compareGreyscale(ImageDetails candidate) {
+		int difTotal = 0;
+		for (int i = 0; i < greyscale.length; i++) {
+			difTotal += Math.abs(greyscale[i] - candidate.greyscale[i]);
+		}
+		return difTotal;
+	}
+
+	private void calcGreyscale() {
+		if (greyscale == null) {
+			final int[] data = ((DataBufferInt) thumbnailBufferedImage.getData().getDataBuffer()).getData();
+			greyscale = new int[data.length];
+
+			int total = 0;
+			log.info("Data len " + data.length);
+			// get total colour for each pixel
+			for (int i = 0; i < data.length; i++) {
+				int d = data[i];
+				System.out.print(Integer.toHexString(d) + ",");
+				int r = d & 0xFF;
+				d >>= 8;
+				int g = d & 0xFF;
+				d >>= 8;
+				int b = d & 0xFF;
+				total = total + r + g + b;
+				greyscale[i] = total;
+			}
+		}
+
+	}
+
+	private long calcDigest() {
+		final int[] data = ((DataBufferInt) thumbnailBufferedImage.getData().getDataBuffer()).getData();
+
+		// DCT dct = new DCT(20);
 
 		long hash = 0;
 		int red = 0, green = 0, blue = 0;
@@ -100,7 +190,7 @@ public class ImageDetails {
 		}
 
 		System.out.println();
-		int mean = total / (thumbsize * thumbsize);
+		int mean = total / data.length;
 
 		for (int i = 0; i < data.length; i++) {
 			int d = data[i];
@@ -178,6 +268,7 @@ public class ImageDetails {
 	public BufferedImage loadScaledBufferedImage() throws IOException {
 		if (scaledBufferedImage == null) {
 			scaledBufferedImage = loadScaledImage(maxImgW, maxImgH);
+			// scaledBufferedImage = loadScaledImage();
 		}
 		return scaledBufferedImage;
 	}
@@ -189,12 +280,31 @@ public class ImageDetails {
 		return thumbnailBufferedImage;
 	}
 
-	public BufferedImage loadThumbnail2BufferedImage() throws IOException {
-		if (thumbnail2BufferedImage == null) {
-			thumbnail2BufferedImage = loadScaledImageIgnoreAspect(THUMB2, THUMB2);
-		}
-		return thumbnail2BufferedImage;
-	}
+	// public BufferedImage loadThumbnail2BufferedImage() throws IOException {
+	// if (thumbnail2BufferedImage == null) {
+	// thumbnail2BufferedImage = loadScaledImageIgnoreAspect(THUMB2, THUMB2);
+	// }
+	// return thumbnail2BufferedImage;
+	// }
+
+	// private BufferedImage loadScaledImage() throws IOException {
+	// BufferedImage finalImage = null;
+	// Image srcFileImage = ImageIO.read(file).getScaledInstance(1024, 1024, Image.SCALE_SMOOTH);
+	// if (srcFileImage == null) {
+	// throw new IOException("Bad file");
+	// }
+	// GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+	// GraphicsConfiguration gc = ge.getDefaultScreenDevice().getDefaultConfiguration();
+	//
+	// finalImage = gc.createCompatibleImage(1024, 1024);// new BufferedImage(newW, newH,
+	// // BufferedImage.TYPE_INT_ARGB);
+	//
+	// Graphics2D gr = finalImage.createGraphics();
+	// gr.drawImage(srcFileImage, 0, 0, 1024, 1024, null);
+	// gr.dispose();
+	// // }
+	// return finalImage;
+	// }
 
 	private BufferedImage loadScaledImage(int maxW, int maxH) throws IOException {
 		BufferedImage finalImage = null;
@@ -249,7 +359,11 @@ public class ImageDetails {
 		return finalImage;
 	}
 
-	public long getDigest() {
+	public long[] getDigest() {
+		return digest3;
+	}
+
+	public long getSimpleDigest() {
 		return digest;
 	}
 
@@ -268,8 +382,8 @@ public class ImageDetails {
 	public boolean imageDiscarded() {
 		return scaledBufferedImage == null;
 	}
-
-	public long getDigest2() {
-		return digest2;
-	}
+	//
+	// public long getDigest2() {
+	// return digest2;
+	// }
 }

@@ -27,14 +27,14 @@ import com.galenframework.rainbow4j.Rainbow4J;
 import com.galenframework.rainbow4j.filters.BlurFilter;
 
 public class CopyManager {
-	final static Logger	log					= Logger.getLogger(CopyManager.class);
+	final static Logger	log				= Logger.getLogger(CopyManager.class);
 	File				dstRootFolder;
 	File				srcRootFolder;
-	Set<String>			destFilenames		= new HashSet<>();
+	Set<String>			destFilenames	= new HashSet<>();
 	public int			maxImgW;
 	public int			maxImgH;
-	ImageDetailsMap		imageDetailsMap		= new ImageDetailsMap();
-	ImageDetailsMap		imageDetailsMap2	= new ImageDetailsMap();
+	ImageDetailsMap[]	imageDetailsMap	= new ImageDetailsMap[3];
+	// ImageDetailsMap imageDetailsMap2 = new ImageDetailsMap();
 	// ImageDetails firstImage = null;
 	private long		hash1;
 	private long		hash2;
@@ -58,7 +58,7 @@ public class CopyManager {
 
 	final BlockingDeque<CopyRequest> copyRequests = new LinkedBlockingDeque<>();
 
-	public void doCopy(String src, String dst, int maxImgW, int maxImgH) {
+	public void doCopy(String src, String dst) {
 
 		dstRootFolder = new File(dst);
 		assertTrue("Dst must be folder", dstRootFolder.isDirectory());
@@ -85,6 +85,7 @@ public class CopyManager {
 
 			long finish = System.currentTimeMillis();
 			long time = finish - start;
+			visualCallbacks.setIterLbl("Finished");
 			log.info("Time taken " + time + "ms");
 			log.info("Copied " + copies + " files");
 			log.info("Renamed " + renames + " files");
@@ -97,6 +98,9 @@ public class CopyManager {
 		aborting = false;
 		maxImgW = maxW;
 		maxImgH = maxH;
+		for (int c = 0; c < 3; c++) {
+			imageDetailsMap[c] = new ImageDetailsMap();
+		}
 		new Thread(copyThread).start();
 	}
 
@@ -123,8 +127,11 @@ public class CopyManager {
 																		log.error("Failed to write image " + dest, e);
 																	}
 																	destFilenames.add(dest.getName().toLowerCase());
-																	imageDetailsMap.put(imageDetails.getDigest(), imageDetails);
-																	imageDetailsMap2.put(imageDetails.getDigest2(), imageDetails);
+																	long[] digest = imageDetails.getDigest();
+																	for (int c = 0; c < 3; c++) {
+																		imageDetailsMap[c].put(digest[c], imageDetails);
+																	}
+																	// imageDetailsMap2.put(imageDetails.getDigest2(), imageDetails);
 
 																	// potentially add another file with the same digest
 																	imageDetails.discardImage();
@@ -157,8 +164,11 @@ public class CopyManager {
 			destFilenames.add(dstPath);
 			try {
 				ImageDetails details = new ImageDetails(child, maxImgW, maxImgH);
-				imageDetailsMap.put(details.getDigest(), details);
-				imageDetailsMap2.put(details.getDigest2(), details);
+				long[] digest = details.getDigest();
+				for (int c = 0; c < 3; c++) {
+					imageDetailsMap[c].put(digest[c], details);
+				}
+				// imageDetailsMap2.put(details.getDigest2(), details);
 				details.discardImage();
 			} catch (IOException e) {
 				log.error("IOExc, skipt to next file");
@@ -173,6 +183,7 @@ public class CopyManager {
 		log.info("<<" + srcPath.getName() + ">>");
 
 		for (File srcFile : srcPath.listFiles(filter)) {
+			log.info("[[" + srcFile.getName() + "]]");
 			visited++;
 			try {
 				if (srcFile.isDirectory()) {
@@ -196,24 +207,23 @@ public class CopyManager {
 
 	private void checkFileAndCopy(File srcFile) throws IOException {
 		if (srcFile.length() > 32768) {
-			String srcName = srcFile.getName();
 
 			ImageDetails imageDetails = new ImageDetails(srcFile, maxImgW, maxImgH);
-			long digest = imageDetails.getDigest();
-			long digest2 = imageDetails.getDigest2();
+			long[] digest = imageDetails.getDigest();
+			// long digest2 = imageDetails.getDigest2();
+			// boolean same=false;
+			for (int c = 0; c < 3; c++) {
+				if (imageDetailsMap[c].has(digest[c])) {
+					log.warn("Clash with digest " + digest[c]);
+					Set<ImageDetails> candidates = imageDetailsMap[c].get(digest[c]);
+					if (checkCollisions(srcFile, candidates, imageDetails))
+						return;
+					log.info("They're all different");
+					break;
+				}
+			}
 
-			if (imageDetailsMap.has(digest)) {
-				log.warn("Clash with digest " + digest);
-				Set<ImageDetails> candidates = imageDetailsMap.get(digest);
-				if (checkCollisions(srcFile, candidates, srcName, imageDetails))
-					return;
-				log.info("OK, it's different");
-			} else if (imageDetailsMap2.has(digest2)) {
-				log.warn("Clash with digest2 " + digest);
-				Set<ImageDetails> candidates = imageDetailsMap2.get(digest2);
-				if (checkCollisions(srcFile, candidates, srcName, imageDetails))
-					return;
-			} else {
+			{
 				log.info("Digest not found");
 				// problem is, it might be a digest miss, so we should do a different digest check
 			}
@@ -223,14 +233,35 @@ public class CopyManager {
 
 	}
 
-	private static boolean checkCollisions(File srcFile, Set<ImageDetails> candidates, String srcName, ImageDetails imageDetails) throws IOException {
+	private boolean checkCollisions(File srcFile, Set<ImageDetails> candidates, ImageDetails imageDetails) throws IOException {
 		for (ImageDetails candidate : candidates) {
-			log.info("File may already exist: " + srcName + " as " + candidate.getFile().getName());
+			log.info("File may already exist: " + srcFile.getAbsolutePath() + " as " + candidate.getFile().getName());
 			// if (sameContents(imageDetails.getScaledBufferedImage(), candidate.getScaledBufferedImage())) {
-			if (similar(imageDetails.loadScaledBufferedImage(), candidate.loadScaledBufferedImage())) {
-				log.warn("File already exists");
+			boolean similar = similar(imageDetails.loadScaledBufferedImage(), candidate.loadScaledBufferedImage());
+			long s1 = imageDetails.getSimpleDigest();
+			long s2 = candidate.getSimpleDigest();
+			long sameness = s1 ^ s2;
+			int sameBits = 64 - Long.bitCount(sameness);
+			boolean sameByDigest = s1 == s2;
+			int greyDif = imageDetails.compareGreyscale(candidate);
+			if (sameByDigest != similar) {
+				if (sameByDigest) {
+					log.error("Same by simple digest but not similar, grey dif " + greyDif);
+				} else {
+					log.error("Similar but different by simple digest, grey dif " + greyDif);
+				}
+				visualCallbacks.visualImageCompare(imageDetails.loadThumbnailBufferedImage(), candidate.loadThumbnailBufferedImage());
+				visualCallbacks.setMsg(candidate.getFile().getName() + ", same " + sameBits + ", grey dif " + greyDif);
+			}
+			if (similar || sameBits > 59 || greyDif < 4000) {
+				if (srcFile.getName().equalsIgnoreCase(candidate.getFile().getName())) {
+					log.warn("File does already exist");
+				} else {
+					log.error("File does already exist");
+				}
 				if (srcFile.length() > candidate.getFile().length()) {
-					log.warn("Src file " + srcFile.length() + " bigger than " + candidate.getFile().length() + " so overwrite with bigger");
+					// log.warn("Src file " + srcFile.length() + " bigger than " + candidate.getFile().length() + " so overwrite with
+					// bigger");
 				} else {
 					log.info("ignore");
 				}
@@ -256,10 +287,13 @@ public class CopyManager {
 			File existingDstFile = new File(dstFileName);
 
 			ImageDetails dst = new ImageDetails(existingDstFile, maxImgW, maxImgH);
-			long existingFileDigest = dst.getDigest();
-			log.error("src " + imageDetails.getDigest() + ", dst " + existingFileDigest + " : " + srcName);
-			System.exit(0);
-			visualCallbacks.visualImageCompare(srcFile.getAbsolutePath(), dstFileName);
+			long[] existingFileDigest = dst.getDigest();
+			for (int c = 0; c < 3; c++) {
+				log.error("src " + Long.toBinaryString(imageDetails.getDigest()[c]) + ", dst " + Long.toBinaryString(existingFileDigest[c]) + " : " + srcName
+						+ "->" + dst.getFile().getName());
+			}
+			visualCallbacks.visualImageCompare(imageDetails.loadThumbnailBufferedImage(), dst.loadThumbnailBufferedImage());
+			// aborting = true;
 
 			String base = FilenameUtils.getBaseName(srcName);
 			String baseExtn = FilenameUtils.getExtension(srcName);
@@ -290,15 +324,18 @@ public class CopyManager {
 	}
 
 	private void takeStock() {
-		log.warn("Filenames " + destFilenames.size() + ", map " + imageDetailsMap.size());
 		int discards = 0;
 		int keeps = 0;
-		for (Set<ImageDetails> e : imageDetailsMap.values()) {
-			for (ImageDetails id : e) {
-				if (id.imageDiscarded()) {
-					discards++;
-				} else {
-					keeps++;
+		for (int c = 0; c < 3; c++) {
+
+			log.warn("Filenames " + destFilenames.size() + ", map " + imageDetailsMap[c].size());
+			for (Set<ImageDetails> e : imageDetailsMap[c].values()) {
+				for (ImageDetails id : e) {
+					if (id.imageDiscarded()) {
+						discards++;
+					} else {
+						keeps++;
+					}
 				}
 			}
 		}
@@ -313,8 +350,12 @@ public class CopyManager {
 		try {
 			ComparisonOptions options = new ComparisonOptions();
 			options.addFilterBoth(new BlurFilter(5));
+			options.setTolerance(10);
+
 			ImageCompareResult res = Rainbow4J.compare(rba, rbb, options);
-			return (res.getPercentage() > 50.0);
+			double diffPercentage = res.getPercentage();
+			boolean same = (diffPercentage < 10.0);
+			return same;
 
 		} catch (IOException e) {
 			// TODO Auto-generated catch block

@@ -93,8 +93,8 @@ public class FileCompare {
 	@SuppressWarnings({ "unused", "static-method" })
 	@Test
 	public void testDct2() throws IOException, InterruptedException {
-		SliceIntArray dctA = getDct8("R:/pix/01-01 SouthAfrica/dscf0190.jpg");
-		SliceIntArray dctB = getDct8("D:/Flat pics/dscf0190.jpg");
+		SliceIntArray dctA = getDct8("R:/pix/01-01 SouthAfrica/dscf0189.jpg");
+		SliceIntArray dctB = getDct8("D:/Flat pics/dscf0189.jpg");
 		SliceIntArray dctC = getDct8("R:/pix/01-01 SouthAfrica/dscf0192.jpg");
 		long digestA = getDigest(dctA);
 		long digestB = getDigest(dctB);
@@ -105,9 +105,10 @@ public class FileCompare {
 	private static long getDigest(SliceIntArray dct) {
 		long digest = 0;
 		int[] ints = dct.array;
-		for (int i = 0; i < 16; i++) {
+		int[] ofs = { 0, 1, 8, 2, 9, 16, 24, 17, 10, 3 };
+		for (int i = 0; i < ofs.length; i++) {
 			digest <<= 1;
-			digest = ints[i] > 0 ? 1 : 0;
+			digest = digest + (ints[ofs[i]] > 0 ? 1 : 0);
 		}
 		return digest;
 	}
@@ -131,6 +132,9 @@ public class FileCompare {
 
 		System.out.println("Type " + bufferedImage.getType());
 		int[] db = ((DataBufferInt) (bufferedImage.getData().getDataBuffer())).getData();
+		for (int i = 0; i < db.length; i++) {
+			db[i] = db[i] & 0xFF;
+		}
 		SliceIntArray sliceIntArray = new SliceIntArray(db, 0);
 		int[] dstb = new int[64];
 		SliceIntArray dst = new SliceIntArray(dstb, 0);
